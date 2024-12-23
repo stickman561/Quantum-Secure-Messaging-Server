@@ -5,7 +5,7 @@
 use rand::rngs::OsRng;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::{Arc};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use dashmap::DashMap;
