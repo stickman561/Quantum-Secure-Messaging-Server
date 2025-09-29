@@ -1,12 +1,12 @@
 [package]
 name = "Server"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 rand = "0.9.0"
 dashmap = "6.1.0"
 secrecy = "0.10.3"
 subtle-encoding = "0.5.1"
-fips203 = {version = "0.4.1", features=["ml-kem-1024", "default-rng"]}
-fips204 = {version = "0.4.5", features=["ml-dsa-87", "default-rng"]}
+fips203 = { version = "0.4.1", features=["ml-kem-1024", "default-rng"] }
+fips204 = { version = "0.4.5", features=["ml-dsa-87", "default-rng"] }

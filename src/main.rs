@@ -33,7 +33,7 @@ const SIGNATURE_CONTEXT: &[u8] = b"\xCE\xB1";
 // The messages peers and the server should transmit.
 const AUTHENTICATION_REQUEST: &str = "Friend requesting access.";
 const SESSION_REQUEST: &str = "もうすぐ私に会えますよ"; // 山村貞子、『リング』 - Sadako Yamamura/Samara Morgan, The Ring (Remake, 2002)
-const ISSUED_CHALLENGE: &str = "Welcome Anon. Here's your challenge:";
+const ISSUED_CHALLENGE: &str = "Welcome, Anon. Here's your challenge:";
 const VERIFIED_PEER: &str = "You're in.";
 const MALICIOUS_PEER: &str = "You are not authorized to be here, your connection will be terminated.\nEND OF LINE";
 const PEER_KEYS_RECEIVED: &str = "I see you have constructed a new lightsaber."; // Darth Vader, Star Wars (Return of the Jedi, 1983)
@@ -44,8 +44,7 @@ const HEARTBEAT_RESPONSE: &str = "There you are."; // Turret, Portal (Valve, 200
 type PeerKyberKey = String;
 type PeerDilithiumKey = String;
 type PeerConnection = TcpStream;
-type LastRequestTime = Option<Instant>;
-type PeerData = (PeerDilithiumKey, PeerConnection, LastRequestTime);
+type PeerData = (PeerDilithiumKey, PeerConnection, Instant);
 type PeerMap = Arc<DashMap<PeerKyberKey, PeerData>>;
 
 fn main() {
@@ -65,36 +64,36 @@ fn main() {
     // Spawn cleanup thread
     thread::spawn(move || {
         loop {
-            thread::sleep(Duration::from_secs(60));  // Adjust interval as needed
+            thread::sleep(Duration::from_secs(300));  // Adjust interval as needed
             cleanup_peer_pool(&cleanup_pool);
         }
     });
-    
+
     // Prompt host to enter a port.
     let mut port = String::new();
     println!("Enter listening port. (Hit Enter to use default port.)");
     stdout().flush().unwrap();
-    
+
     stdin().read_line(&mut port).unwrap();
-    
+
     if port.trim().is_empty() {
         port = String::from(DEFAULT_PORT);
     }
-    
+
     else {
         port = port.trim().to_string();
     }
 
     // Listen for incoming connections on fixed port. Allow any IP to connect.
-    let listener = TcpListener::bind(format!("0.0.0.0:{}", port)).expect("Unable to bind to port.");
+    let listener = TcpListener::bind(format!("0.0.0.0:{port}")).expect("Unable to bind to port.");
 
-    println!("Server listening on port {}", port);
+    println!("Server listening on port {port}");
 
     // Handle all incoming connections.
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => handle_client(stream, &global_peer_pool),
-            Err(e) => eprintln!("Connection failed: {}", e),
+            Err(e) => eprintln!("Connection failed: {e}"),
         }
     }
 
@@ -128,12 +127,12 @@ fn handle_peer(mut stream: TcpStream, peer_pool: &PeerMap) {
     let challenge_nonce = String::from_utf8(hex::encode(generate_nonce(NONCE_SIZE).expose_secret())).unwrap();
 
     // Send the challenge to the peer.
-    let challenge = format!("{}\n{}", ISSUED_CHALLENGE, challenge_nonce);
-    println!("{}", challenge);
+    let challenge = format!("{ISSUED_CHALLENGE}\n{challenge_nonce}");
+    println!("{challenge}");
 
     if let Err(e) = write_message(&mut stream, challenge.as_bytes()) {
-        eprintln!("Error welcoming peer: {}", e);
-    };
+        eprintln!("Error welcoming peer: {e}");
+    }
 
     // Read the peer's response.
     let request = read_from_stream(&mut stream);
@@ -165,14 +164,14 @@ fn handle_peer(mut stream: TcpStream, peer_pool: &PeerMap) {
 
         // Attempt to verify peer using nonce, pubkey, and signature.
         if verify_dilithium_signature(&peer_public_key,
-                                      SecretSlice::from(hex::decode(challenge_nonce).expect("Invalid nonce received.")),
-                                      deserialize_dilithium_signature(serial_signature)
+                                      &SecretSlice::from(hex::decode(challenge_nonce).expect("Invalid nonce received.")),
+                                      &deserialize_dilithium_signature(serial_signature)
         ) {
 
             // Peer has verified ownership of the Dilithium key. Reply.
             if let Err(e) = write_message(&mut stream, VERIFIED_PEER.as_bytes()) {
-                eprintln!("Error sending peer verification: {}", e);
-            };
+                eprintln!("Error sending peer verification: {e}");
+            }
 
             println!("Peer Authenticated.");
 
@@ -205,15 +204,15 @@ fn handle_peer(mut stream: TcpStream, peer_pool: &PeerMap) {
 
                 // Attempt to verify the kyber key was signed with the correct Dilithium key.
                 if verify_dilithium_signature(&peer_public_key,
-                                              SecretSlice::from(Vec::from(deserialize_kyber_key(serial_kyber_public_key).into_bytes())),
-                                              deserialize_dilithium_signature(serial_kyber_key_signature)
+                                              &SecretSlice::from(Vec::from(deserialize_kyber_key(serial_kyber_public_key).into_bytes())),
+                                              &deserialize_dilithium_signature(serial_kyber_key_signature)
                 ) {
 
                     // Success. Inform the peer that we received their keys and will
                     // add them to the pool. They are cleared to proceed to exchange.
                     if let Err(e) = write_message(&mut stream, PEER_KEYS_RECEIVED.as_bytes()) {
-                        eprintln!("Error sending information to peer: {}", e);
-                    };
+                        eprintln!("Error sending information to peer: {e}");
+                    }
 
                     // Add the peer to the pool in a thread-safe manner.
                     peer_pool
@@ -221,7 +220,7 @@ fn handle_peer(mut stream: TcpStream, peer_pool: &PeerMap) {
                                 (
                                     serial_peer_public_key.to_string(),
                                     stream,
-                                    None, // No prior requests
+                                    Instant::now()
                                 )
                         );
 
@@ -246,8 +245,8 @@ fn handle_peer(mut stream: TcpStream, peer_pool: &PeerMap) {
         // The nonce was signed incorrectly.
         else {
             if let Err(e) = write_message(&mut stream, MALICIOUS_PEER.as_bytes()) {
-                eprintln!("Error warning unwelcome peer: {}", e);
-            };
+                eprintln!("Error warning unwelcome peer: {e}");
+            }
 
             println!("Peer rejected.");
         }
@@ -256,12 +255,12 @@ fn handle_peer(mut stream: TcpStream, peer_pool: &PeerMap) {
     // The nonce was modified or damaged in transit.
     else {
         if let Err(e) = write_message(&mut stream, b"Invalid signature returned.") {
-            eprintln!("Error responding to peer: {}", e);
-        };
+            eprintln!("Error responding to peer: {e}");
+        }
 
         println!("Invalid signature.");
     }
-    
+
 }
 
 // Function to handle session initiation.
@@ -300,64 +299,62 @@ fn handle_session(mut stream: TcpStream, session_data: &SecretString, peer_pool:
         Some(ref v) => v.value(),
         None => { return; }
     };
-    
+
 
     // Confirm that this is an authentic connection request.
     if verify_dilithium_signature(&deserialize_dilithium_key(serial_dilithium_public_key),
-                                  SecretSlice::from(Vec::from(deserialize_kyber_key(target_peer).into_bytes())),
-                                  deserialize_dilithium_signature(target_signature)
+                                  &SecretSlice::from(Vec::from(deserialize_kyber_key(target_peer).into_bytes())),
+                                  &deserialize_dilithium_signature(target_signature)
     ) {
         // It is. If the listening peer exists, send them the signal. Our job is done.
         if peer_pool.contains_key(target_peer) {
-            
+
             // Search the pool for our target peer. They should be listening.
             let mut target_search = peer_pool.get_mut(target_peer);
-            
+
             let (_, target_socket, last_request) = match target_search {
                 Some(ref mut v) => v.value_mut(),
                 None => { return; }
             };
 
             // Avoid requests from last 60 seconds.
-            if last_request.is_some() && last_request.unwrap().elapsed() < Duration::from_secs(60) {
+            if last_request.elapsed() < Duration::from_secs(60) {
                 return;
             }
 
-            else {
-                *last_request = Some(Instant::now());
-            }
+            *last_request = Instant::now();
 
             // Send the connection request to the target peer. Format:
-            
+
             /*
              *   Connection request header.
              *   The sender's public Kyber key.
              *   The sender's listening port, encrypted using the target's public key.
              */
             if let Err(e) = write_message(target_socket,
-                                                            format!("{}{}{}{}{}{}{}{}{}",
-                                                            PEER_CONNECTION_REQUEST,
-                                                            TRANSMISSION_DELIMITER,
-                                                            kyber_key,
-                                                            TRANSMISSION_DELIMITER,
-                                                            stream.peer_addr().unwrap().ip(),
-                                                            TRANSMISSION_DELIMITER,
-                                                            encrypted_port,
-                                                            TRANSMISSION_DELIMITER,
-                                                            ciphertext
-            ).as_bytes()) {
-                eprintln!("Transmission failed: {}", e);
+                                          format!("{}{}{}{}{}{}{}{}{}",
+                                                  PEER_CONNECTION_REQUEST,
+                                                  TRANSMISSION_DELIMITER,
+                                                  kyber_key,
+                                                  TRANSMISSION_DELIMITER,
+                                                  stream.peer_addr().unwrap().ip(),
+                                                  TRANSMISSION_DELIMITER,
+                                                  encrypted_port,
+                                                  TRANSMISSION_DELIMITER,
+                                                  ciphertext
+                                          ).as_bytes()) {
+                eprintln!("Transmission failed: {e}");
             }
         }
 
         // No else - the server will not inform the sender if the target does not exist.
     }
-    
+
     else {
         println!("Signature verification failed - Bad connection request.");
     }
 
-    
+
 }
 
 // Generates a secure nonce for peer authentication.
@@ -369,7 +366,16 @@ fn generate_nonce(size: usize) -> SecretSlice<u8> {
 
 // Function to transmit data with length prefixed.
 fn write_message(stream: &mut TcpStream, data: &[u8]) -> std::io::Result<()> {
-    let len = data.len() as u32;
+    if data.is_empty() {
+        return Ok(());
+    }
+
+    let len = u32::try_from(data.len())
+        .map_err(|_| std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "Invalid data packet."
+        ))?;
+
     stream.write_all(&len.to_be_bytes())?;
     stream.write_all(data)?;
     Ok(())
@@ -381,48 +387,50 @@ fn read_from_stream(stream: &mut TcpStream) -> SecretString {
     let mut len_bytes = [0u8; 4];
 
     match stream.read_exact(&mut len_bytes) {
-        Ok(_) => {
+        Ok(()) => {
             let len = u32::from_be_bytes(len_bytes) as usize;
             let mut buffer = vec![0; len];
 
             match stream.read_exact(&mut buffer) {
-                Ok(_) => {
+                Ok(()) => {
                     let result = String::from_utf8(buffer);
 
                     if let Ok(safe_result) = result {
                         SecretString::from(safe_result)
                     }
-                    
+
                     else {
                         SecretString::from("Invalid Data in the Stream.")
                     }
                 },
                 Err(e) => {
-                    if let Err(e2) = write_message(stream, format!("Unknown server error: {}", e).as_bytes()) {
-                        eprintln!("Unknown server error: {}", e2);
-                    };
-                    SecretString::from(format!("Failed to read from stream: {}", e))
+                    if let Err(e2) = write_message(stream, format!("Unknown server error: {e}").as_bytes()) {
+                        eprintln!("Unknown server error: {e2}");
+                    }
+                    SecretString::from(format!("Failed to read from stream: {e}"))
                 }
             }
         },
+
         Err(e) => {
-            if let Err(e2) = write_message(stream, format!("Unknown server error: {}", e).as_bytes()) {
-                eprintln!("Unknown server error: {}", e2);
-            };
-            SecretString::from(format!("Failed to read from stream: {}", e))
+            if let Err(e2) = write_message(stream, format!("Unknown server error: {e}").as_bytes()) {
+                eprintln!("Unknown server error: {e2}");
+            }
+            SecretString::from(format!("Failed to read from stream: {e}"))
         }
     }
 }
 
 // Function to check if a stream is still alive - used to clean up disconnected peers
 fn is_stream_alive(stream: &mut TcpStream) -> bool {
+
     // Send heartbeat prompt
     if write_message(stream, HEARTBEAT_PROMPT.as_bytes()).is_err() {
         return false;
     }
 
     // Wait for response with a timeout
-    stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap_or(());
+    stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap_or(());
 
     read_from_stream(stream).expose_secret() == HEARTBEAT_RESPONSE
 }
@@ -432,14 +440,14 @@ fn cleanup_peer_pool(peer_pool: &PeerMap) {
     println!("Cleaning up peer pool. Sending heartbeat signals...");
 
     let to_remove = Arc::new(Mutex::new(Vec::new()));
-    
+
     peer_pool.iter()
         .map(|entry| {
             let key = entry.key().clone();
             let test_stream = entry.value().1.try_clone();
-            
+
             let local_handle = Arc::clone(&to_remove);
-            
+
             thread::spawn(move || {
                 if test_stream.is_err() || !is_stream_alive(&mut test_stream.unwrap()) {
                     local_handle.lock().unwrap().push(key);
@@ -452,16 +460,24 @@ fn cleanup_peer_pool(peer_pool: &PeerMap) {
 
     // Second pass - remove dead connections
     to_remove.lock().unwrap().iter().for_each(|key| {
-        peer_pool.remove(key);
+        if let Some(peer) = peer_pool.get(key) {
+            if peer.value().2.elapsed() > Duration::from_secs(300) {
+                peer_pool.remove(key);
+            }
+        }
+
+        else {
+            peer_pool.remove(key);
+        }
     });
 
     if dead_peer_count > 0 {
         if dead_peer_count == 1 {
             println!("Cleaned up 1 disconnected peer. さむらいがひとりたつ");
         }
-        
+
         else {
-            println!("Cleaned up {} disconnected peers. さよなら、友達", dead_peer_count);
+            println!("Cleaned up {dead_peer_count} disconnected peers. さよなら、友達");
         }
     }
 
@@ -488,12 +504,11 @@ fn deserialize_dilithium_signature(signature: &str) -> SecretSlice<u8> {
 }
 
 // Verifies a message using a Dilithium Public Key.
-fn verify_dilithium_signature(key: &ml_dsa_87::PublicKey, message: SecretSlice<u8>, signature: SecretSlice<u8>) -> bool {
-    let result = key.verify(message.expose_secret(),
+fn verify_dilithium_signature(key: &ml_dsa_87::PublicKey, message: &SecretSlice<u8>, signature: &SecretSlice<u8>) -> bool {
+    key.verify(message.expose_secret(),
                signature.expose_secret().try_into().expect("Invalid Signature Format"),
-               SIGNATURE_CONTEXT);
-    
-    result
+               SIGNATURE_CONTEXT
+    )
 }
 
 // Reads a hex-encoded Kyber public key. Will not
