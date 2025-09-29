@@ -2,7 +2,6 @@
 // Date: November 2, 2024
 // License: CC BY-NC 4.0
 
-use rand::rngs::StdRng;
 use std::io::{stdin, stdout, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
@@ -14,8 +13,9 @@ use fips203::traits::SerDes as SerDesKyber;
 use fips204::ml_dsa_87;
 use fips204::traits::Verifier;
 use fips204::traits::SerDes as SerDesDilithium;
-use rand::{RngCore, SeedableRng};
-use secrecy::{ExposeSecret, SecretSlice, SecretString};
+use rand_chacha::ChaCha20Rng;
+use rand_chacha::rand_core::{RngCore, SeedableRng};
+use secrecy::{ExposeSecret, ExposeSecretMut, SecretSlice, SecretString};
 use subtle_encoding::hex;
 
 // Fixed port for server.
@@ -359,9 +359,9 @@ fn handle_session(mut stream: TcpStream, session_data: &SecretString, peer_pool:
 
 // Generates a secure nonce for peer authentication.
 fn generate_nonce(size: usize) -> SecretSlice<u8> {
-    let mut nonce = vec![0; size];
-    StdRng::from_os_rng().fill_bytes(&mut nonce);
-    SecretSlice::from(nonce)
+    let mut nonce = SecretSlice::from(vec![0; size]);
+    ChaCha20Rng::from_os_rng().fill_bytes(nonce.expose_secret_mut());
+    nonce
 }
 
 // Function to transmit data with length prefixed.
